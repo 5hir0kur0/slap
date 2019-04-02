@@ -1,0 +1,8 @@
+[package]
+name = "slap"
+version = "0.1.0"
+authors = ["5hir0kur0 <12101162+5hir0kur0@users.noreply.github.com>"]
+edition = "2018"
+
+[dependencies]
+portaudio = "0.7.0"
