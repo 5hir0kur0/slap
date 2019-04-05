@@ -173,6 +173,11 @@ fn gui_thread(rx: Receiver<DataPoint>) -> Result<(), String> {
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
 
+    // anti-aliasing
+    let gl_attr = video_subsystem.gl_attr();
+    gl_attr.set_multisample_buffers(1);
+    gl_attr.set_multisample_samples(4);
+
     let window = video_subsystem.window("SLAP", 800, 600)
         .position_centered()
         .resizable()
@@ -222,7 +227,7 @@ fn gui_thread(rx: Receiver<DataPoint>) -> Result<(), String> {
         if let Err(mpsc::TryRecvError::Disconnected) = rx.try_recv() {
             break 'running
         }
-        ::std::thread::sleep(Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
         // The rest of the game loop goes here...
         // println!("{:?}", canvas.output_size())
         canvas.set_draw_color(Color::RGB(0x28, 0x28, 0x28));
@@ -237,12 +242,22 @@ fn gui_thread(rx: Receiver<DataPoint>) -> Result<(), String> {
 fn draw_data_points(canvas: &mut Canvas<sdl2::video::Window>, values: &VecDeque<DataPoint>) -> Result<(), String> {
     let (width,height) = canvas.output_size()?;
     canvas.set_draw_color(Color::RGB(0xeb, 0xdb, 0xb2));
+    let mut prev = None;
     for i in 0..values.len() {
         match &values[i] {
             DataPoint::Frequency{freq, ..} => {
                 let x = i * width as usize / values.len();
                 let y = (freq - LOWEST_FREQUENCY) / (HIGHEST_FREQUENCY - LOWEST_FREQUENCY) * height as f32;
-                canvas.draw_point(Point::new(x as i32, y as i32));
+                let curr = Point::new(x as i32, y as i32);
+                if let Some(p) = prev {
+                    canvas.draw_line(p, curr);
+                } else {
+                    canvas.draw_point(curr);
+                }
+                prev = Some(curr);
+            },
+            DataPoint::Nothing => {
+                prev = None;
             },
             _ => {}
         }
