@@ -14,12 +14,11 @@ use rustfft::num_complex::Complex;
 use rustfft::num_traits::Zero;
 use sdl2::pixels::Color;
 use sdl2::event::Event;
-use sdl2::event::WindowEvent;
 use sdl2::event::WindowEvent::Resized;
 use sdl2::keyboard::Keycode;
 use std::time::Duration;
-use sdl2::rect::Point;
 use sdl2::render::Canvas;
+use sdl2::gfx::primitives::DrawRenderer;
 
 
 const CHANNELS: i32 = 1;
@@ -34,8 +33,9 @@ const NUMBER_OF_VALUES: usize = 100;
 type FORMAT = f32;
 
 enum DataPoint {
-    Frequency{freq: FORMAT, norm: FORMAT},
-    Nothing,
+    /// values: (freq,norm) of all frequencies in the range being analyzed
+    Frequency{freq: FORMAT, norm: FORMAT, values: Vec<(FORMAT, FORMAT)>},
+    Nothing{values: Vec<(FORMAT, FORMAT)>},
     LongSilence
 }
 
@@ -96,7 +96,7 @@ fn choose_sample_rate(pa: &pa::PortAudio, input_params: pa::StreamParameters<FOR
 
 fn prompt(p: &str) {
     print!("{}", p);
-    io::stdout().flush();
+    io::stdout().flush().unwrap();
 }
 
 /// Create the stream settings for the input stream
@@ -123,49 +123,20 @@ fn compute_significant_indices(sample_rate: f64) -> (usize,usize) {
     (lower, upper)
 }
 
-/// Process the results of the FFT. Consider only indices i with lower <= i <= upper.
-/// Uses index_norm as a scratch space to store the mapping between indices and norms
-/// of the output vectors.
-/// Computes the average of the loudest n frequencies.
-/// Returns this average and the average norm (considering the loudest n frequencies).
-fn process_fft_results(lower: usize, upper: usize, n: usize, sample_rate: f64,
-                       fft_output: &mut Vec<Complex<FORMAT>>,
-                       index_norm: &mut Vec<(usize, f32)>) -> (f32, f32) {
-    index_norm.clear();
-    // let mut max = first_significant_index;
-    // for i in first_significant_index..=last_significant_index {
-    //     if fft_output[i].norm() > fft_output[max].norm() {
-    //         max = i;
-    //     }
-    // }
-    // let norm = fft_output[max].norm();
-    // if norm > THRESHOLD {
-    //     println!("\r{} @ {}", max as f64 * sample_rate / FRAME_COUNT as f64, norm);
-    //     io::stdout().flush().unwrap();
-    // }
-
-    for i in 0..n {
-        let mut max = lower;
-        for j in lower + i..=upper {
-            if fft_output[j].norm() > fft_output[max].norm() {
-                max = j;
-            }
-        }
-        index_norm.push((max, fft_output[max].norm()));
-        fft_output[max] = Complex::zero();
-    }
-
+fn process_fft_results(n: usize, sorted_freq_norm: &Vec<(f32, f32)>) -> (f32,f32) {
     let mut sum_norm: f32 = 0.0;
     let mut avg_freq: f32 = 0.0;
-    let num = index_norm.len();
-    for i in 0..num {
-        sum_norm += index_norm[i].1;
+
+    for (_,n) in &sorted_freq_norm[0..n] {
+        sum_norm += n;
     }
-    for i in 0..num {
-        let (idx, norm) = index_norm[i];
-        avg_freq += idx as f32 * sample_rate as f32 / FRAME_COUNT as f32 * norm / sum_norm;
+
+    for (f,n) in &sorted_freq_norm[0..n] {
+        avg_freq += f * n / sum_norm;
     }
+
     let avg_norm = sum_norm / n as f32;
+
     (avg_freq, avg_norm)
 }
 
@@ -176,7 +147,7 @@ fn gui_thread(rx: Receiver<DataPoint>) -> Result<(), String> {
     // anti-aliasing
     let gl_attr = video_subsystem.gl_attr();
     gl_attr.set_multisample_buffers(1);
-    gl_attr.set_multisample_samples(4);
+    gl_attr.set_multisample_samples(16);
 
     let window = video_subsystem.window("SLAP", 800, 600)
         .position_centered()
@@ -190,6 +161,7 @@ fn gui_thread(rx: Receiver<DataPoint>) -> Result<(), String> {
     let mut event_pump = sdl_context.event_pump()?;
     let mut nothing_count = 0;
     let mut values =  VecDeque::<DataPoint>::new();
+    let mut last_nothing = None;
     'running: loop {
         for event in event_pump.poll_iter() {
             match event {
@@ -203,22 +175,31 @@ fn gui_thread(rx: Receiver<DataPoint>) -> Result<(), String> {
             }
         }
         while let Ok(data) = rx.try_recv() {
-            while values.len() > NUMBER_OF_VALUES {
+            while values.len() >= NUMBER_OF_VALUES {
                 let _ = values.pop_front();
             }
             match data {
-                DataPoint::Frequency{freq, norm} => {
-                    println!("Got {} @ {}", freq, norm);
+                v@DataPoint::Frequency{..} => {
+                    // println!("Got {} @ {}", freq, norm);
                     nothing_count = 0;
-                    values.push_back(DataPoint::Frequency{freq,norm});
+                    if let Some(nothing) = last_nothing {
+                        if values.len() >= NUMBER_OF_VALUES { let _ = values.pop_front(); }
+                        values.push_back(nothing);
+                        last_nothing = None;
+                        println!("pushing nothing");
+                    }
+                    values.push_back(v);
                 },
-                DataPoint::Nothing => {
-                    println!("Got Nothing");
+                v@DataPoint::Nothing{..} => {
+                    // println!("Got Nothing");
                     nothing_count += 1;
                     if nothing_count == 1 {
-                        values.push_back(DataPoint::Nothing);
-                    } else if nothing_count == LONG_SILENCE_DURATION {
-                        values.push_back(DataPoint::LongSilence);
+                        values.push_back(v);
+                    } else if nothing_count >= LONG_SILENCE_DURATION {
+                        if nothing_count == LONG_SILENCE_DURATION {
+                            values.push_back(DataPoint::LongSilence);
+                        }
+                        last_nothing = Some(v);
                     }
                 }
                 DataPoint::LongSilence => eprintln!("Got LongSilence (This can't happen in the current implementation)"),
@@ -239,34 +220,56 @@ fn gui_thread(rx: Receiver<DataPoint>) -> Result<(), String> {
     Ok(())
 }
 
-fn draw_data_points(canvas: &mut Canvas<sdl2::video::Window>, values: &VecDeque<DataPoint>) -> Result<(), String> {
+fn draw_data_points(canvas: &mut Canvas<sdl2::video::Window>, points: &VecDeque<DataPoint>) -> Result<(), String> {
     let (width,height) = canvas.output_size()?;
-    canvas.set_draw_color(Color::RGB(0xeb, 0xdb, 0xb2));
     let mut prev = None;
-    for i in 0..values.len() {
-        match &values[i] {
-            DataPoint::Frequency{freq, ..} => {
-                let x = i * width as usize / values.len();
+    let line_color = Color::RGB(0xeb, 0xdb, 0xb2);
+    let point_color = Color::RGB(0xfa, 0xbd, 0x2f);
+    let silence_color = Color::RGB(0x8f, 0x3f, 0x71);
+    let line_thickness = 4;
+    let radius = 1;
+    let mut nothing_or_freq_values;
+    for i in 0..points.len() {
+        let x = i * width as usize / points.len();
+        let x = x as i16;
+        match &points[i] {
+            DataPoint::Frequency{freq, values, ..} => {
                 let y = height as f32 * (1.0 - (freq - LOWEST_FREQUENCY) / (HIGHEST_FREQUENCY - LOWEST_FREQUENCY));
-                let curr = Point::new(x as i32, y as i32);
-                println!("freq: {}, x: {}, y: {} (h: {})", freq, x, y as i32, height);
+                let y = y as i16;
                 if let Some(p) = prev {
-                    canvas.draw_line(p, curr)?;
+                    let (x_old, y_old) = p;
+                    canvas.thick_line(x_old, y_old, x, y, line_thickness, line_color)?;
                 } else {
-                    canvas.draw_point(curr)?;
+                    canvas.circle(x, y, line_thickness as i16/2, line_color)?;
                 }
-                prev = Some(curr);
+                prev = Some((x,y));
+                nothing_or_freq_values = Some(values);
             },
-            DataPoint::Nothing => {
+            DataPoint::Nothing{values} => {
                 prev = None;
+                nothing_or_freq_values = Some(values);
             },
-            _ => {}
+            DataPoint::LongSilence => {
+                nothing_or_freq_values = None;
+                canvas.thick_line(x, 0, x, height as i16, 2*line_thickness/3, silence_color)?;
+            }
+        }
+        if let Some(values) = nothing_or_freq_values {
+            let max_norm: FORMAT = values[0].1;
+            for v in values {
+                let (f,n) = v;
+                let col = Color::RGBA(point_color.r, point_color.g, point_color.b, (0xff as f32 * n/max_norm) as u8);
+                let y2 = height as f32 * (1.0 - (f - LOWEST_FREQUENCY) / (HIGHEST_FREQUENCY - LOWEST_FREQUENCY));
+                let y2 = y2 as i16;
+                canvas.circle(x, y2, radius, col)?;
+            }
         }
     }
-    // canvas.draw_line(Point::new(0,0), Point::new(width as i32, height as i32));
-    canvas.set_draw_color(Color::RGB(0xff, 0, 0));
-    canvas.draw_point(Point::new(width as i32 - 1, height as i32 - 1));
     Ok(())
+}
+
+fn index_to_freq(i: usize, sample_rate: f64) -> f32 {
+    i as f32 * sample_rate as f32 / FRAME_COUNT as f32
 }
 
 fn main() {
@@ -279,7 +282,11 @@ fn main() {
     let (sample_rate, settings) = init_stream_settings(&pa).unwrap();
     let (first_significant_index, last_significant_index) = compute_significant_indices(sample_rate as f64);
 
-    println!("Considering indices from {} to {}", first_significant_index, last_significant_index);
+    println!("Considering indices from {} ({:.0}Hz) to {} ({:.0}Hz)",
+             first_significant_index,
+             index_to_freq(first_significant_index, sample_rate),
+             last_significant_index,
+             index_to_freq(last_significant_index, sample_rate));
     let mut stream = pa.open_blocking_stream(settings).expect("Failed to open stream");
     stream.start().expect("Failed to start stream");
 
@@ -291,8 +298,6 @@ fn main() {
     let mut fft_output = vec![Complex::<FORMAT>::zero(); FRAME_COUNT as usize];
     let fft = FFTplanner::new(false).plan_fft(FRAME_COUNT as usize);
     let n = 3;
-    let mut index_norm = Vec::<(usize,f32)>::new();
-    let mut nothing_count = 0;
     loop {
         let input_samples = stream.read(FRAME_COUNT);
         fft_input.clear();
@@ -306,14 +311,23 @@ fn main() {
         fft_input.extend(input_samples.iter().map(|x| Complex::new(*x, 0.0)));
         fft.process(&mut fft_input, &mut fft_output);
 
-        let (freq,norm) = process_fft_results(first_significant_index, last_significant_index,
-                                              n, sample_rate, &mut fft_output, &mut index_norm);
+        // Contains only the values in the range that is being analyzed
+        let mut fft_freq_norm = Vec::with_capacity(last_significant_index - first_significant_index + 1);
+
+        for (i,z) in fft_output[first_significant_index..=last_significant_index].iter().enumerate() {
+            fft_freq_norm.push((index_to_freq(i + first_significant_index, sample_rate), z.norm()));
+        }
+
+        fft_freq_norm.sort_by(|(_,a), (_,b)| b.partial_cmp(a).unwrap());
+
+        let (freq,norm) = process_fft_results(n, &fft_freq_norm);
+
         let res;
         if norm > THRESHOLD {
             // println!("\r{} @ {}", freq, norm);
-            res = tx.send(DataPoint::Frequency{freq,norm});
+            res = tx.send(DataPoint::Frequency{freq,norm, values: fft_freq_norm});
         } else {
-            res = tx.send(DataPoint::Nothing);
+            res = tx.send(DataPoint::Nothing{values: fft_freq_norm});
         }
         if res.is_err() {
             println!("The GUI thread disconnected. Exiting.");
