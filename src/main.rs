@@ -22,14 +22,14 @@ use sdl2::gfx::primitives::DrawRenderer;
 
 const CHANNELS: i32 = 1;
 const INTERLEAVED: bool = true;       // Shouldn't make a difference; we only have 1 channel
-const DEFAULT_SAMPLE_RATE: f64 = 10_000.0;
+const DEFAULT_SAMPLE_RATE: f64 = 11_025.0;
 const FRAME_COUNT: u32 = 1024;
-const THRESHOLD: f32 = 4.0;
-const LOWEST_FREQUENCY: f32 = 60.0;
+const THRESHOLD: f32 = 3.0;
+const LOWEST_FREQUENCY: f32 = 64.0;
 const HIGHEST_FREQUENCY: f32 = 420.0;
 const LONG_SILENCE_DURATION: i32 = 15; // Number of samples below threshold that consitute "long silence"
-const NUMBER_OF_VALUES: usize = 64;
-const N: usize = 3; // The number of frequencies to consider for the graph (i.e. use the N loudest frequencies for the graph)
+const NUMBER_OF_VALUES: usize = 84;
+const N: usize = 4; // The number of frequencies to consider for the graph (i.e. use the N loudest frequencies for the graph)
 type FORMAT = f32;
 
 enum DataPoint {
