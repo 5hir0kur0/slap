@@ -192,6 +192,9 @@ fn gui_thread(rx: Receiver<DataPoint>) -> Result<(), String> {
                 Event::KeyDown { keycode: Some(Keycode::Q), .. } => {
                     break 'running
                 },
+                Event::KeyDown { keycode: Some(Keycode::R), .. } => {
+                    values.clear();
+                },
                 _ => {}
             }
         }
