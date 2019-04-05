@@ -303,39 +303,22 @@ fn draw_data_points(canvas: &mut Canvas<sdl2::video::Window>, points: &VecDeque<
     Ok(())
 }
 
-/// Sorry, I couldn't think of an elegant way to do this...
 fn smooth_value(i: usize, f: f32, points: &VecDeque<DataPoint>) -> f32 {
+    let mut numerator = f;
+    let mut denominator = 1.0;
     if i > 0 {
         if let DataPoint::Frequency{freq: freq_left,..} = points[i-1] {
-            if i < points.len() - 1 {
-                if let DataPoint::Frequency{freq: freq_right,..} = points[i+1] { // left and right
-                    (f + 2.0 * freq_left + 2.0 * freq_right)/5.0
-                } else {        // only left
-                    (f + 2.0 * freq_left)/3.0
-                }
-            } else {            // only left
-                (f + 2.0 * freq_left)/3.0
-            }
-        } else {
-            if i < points.len() - 1 {
-                if let DataPoint::Frequency{freq: freq_right,..} = points[i+1] { // only right
-                    (f + 2.0 * freq_right)/3.0
-                } else {
-                    f
-                }
-            } else {
-                f
-            }
+            numerator += 2.0 * freq_left;
+            denominator += 2.0;
         }
-    } else if i < points.len() - 1 {
-        if let DataPoint::Frequency{freq: freq_right,..} = points[i+1] { // only right
-            (f + 2.0 * freq_right)/3.0
-        } else {
-            f
-        }
-    } else {
-        f
     }
+    if i < points.len() - 1 {
+        if let DataPoint::Frequency{freq: freq_right,..} = points[i+1] {
+            numerator += 2.0 * freq_right;
+            denominator += 2.0;
+        }
+    }
+    numerator / denominator
 }
 
 fn index_to_freq(i: usize, sample_rate: f64) -> f32 {
