@@ -247,12 +247,13 @@ fn draw_data_points(canvas: &mut Canvas<sdl2::video::Window>, values: &VecDeque<
         match &values[i] {
             DataPoint::Frequency{freq, ..} => {
                 let x = i * width as usize / values.len();
-                let y = (freq - LOWEST_FREQUENCY) / (HIGHEST_FREQUENCY - LOWEST_FREQUENCY) * height as f32;
+                let y = height as f32 * (1.0 - (freq - LOWEST_FREQUENCY) / (HIGHEST_FREQUENCY - LOWEST_FREQUENCY));
                 let curr = Point::new(x as i32, y as i32);
+                println!("freq: {}, x: {}, y: {} (h: {})", freq, x, y as i32, height);
                 if let Some(p) = prev {
-                    canvas.draw_line(p, curr);
+                    canvas.draw_line(p, curr)?;
                 } else {
-                    canvas.draw_point(curr);
+                    canvas.draw_point(curr)?;
                 }
                 prev = Some(curr);
             },
