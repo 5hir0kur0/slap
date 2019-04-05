@@ -32,15 +32,14 @@ const NUMBER_OF_VALUES: usize = 84;
 const N: usize = 4; // The number of frequencies to consider for the graph (i.e. use the N loudest frequencies for the graph)
 type FORMAT = f32;
 
+/// Data structure used for passing values from the main thread to the gui thread
 enum DataPoint {
-    /// values: (freq,norm) of all frequencies in the range being analyzed
     Frequency{freq: FORMAT, norm: FORMAT, values: Vec<(FORMAT, FORMAT)>},
     Nothing{values: Vec<(FORMAT, FORMAT)>},
     LongSilence
 }
 
 /// Print a prompt and read a value from stdin.
-
 fn read_from_stdin<T: FromStr>(p: &str) -> Result<T, T::Err> {
     prompt(p);
     let mut s = String::new();
@@ -50,7 +49,6 @@ fn read_from_stdin<T: FromStr>(p: &str) -> Result<T, T::Err> {
 }
 
 /// Let the user choose an input device using stdin.
-
 fn choose_device(pa: &pa::PortAudio) -> Result<pa::DeviceIndex, pa::Error> {
     let devices = pa.devices()?;
     let mut inputs = Vec::new();
@@ -61,7 +59,7 @@ fn choose_device(pa: &pa::PortAudio) -> Result<pa::DeviceIndex, pa::Error> {
         let host = match pa.host_api_info(info.host_api) {
             Some(h) => h,
             None => {
-                println!("Couldn't get host for '{}'. Ignoring.", info.name);
+                eprintln!("Couldn't get host for '{}'. Ignoring.", info.name);
                 continue
             }
         };
@@ -84,6 +82,7 @@ fn choose_device(pa: &pa::PortAudio) -> Result<pa::DeviceIndex, pa::Error> {
     Ok(inputs[choice.unwrap_or(default_index as u32) as usize])
 }
 
+/// Let the user choose a sample rate
 fn choose_sample_rate(pa: &pa::PortAudio, input_params: pa::StreamParameters<FORMAT>) -> f64 {
     let choice: Result<f64,_> = read_from_stdin(&format!("Choose sample rate (default: {} Hz): ",
                                       DEFAULT_SAMPLE_RATE));
@@ -94,6 +93,7 @@ fn choose_sample_rate(pa: &pa::PortAudio, input_params: pa::StreamParameters<FOR
     sample_rate
 }
 
+/// Print a prompt and flush stdout
 fn prompt(p: &str) {
     print!("{}", p);
     io::stdout().flush().unwrap();
@@ -162,6 +162,7 @@ fn process_fft_results(n: usize, fft_output: &Vec<Complex<FORMAT>>, lower: usize
     (avg_freq, avg_norm, fft_freq_norm)
 }
 
+/// Initialize the gui and redraw in an infinite loop
 fn gui_thread(rx: Receiver<DataPoint>) -> Result<(), String> {
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
@@ -243,7 +244,13 @@ fn gui_thread(rx: Receiver<DataPoint>) -> Result<(), String> {
     Ok(())
 }
 
-fn draw_data_points(canvas: &mut Canvas<sdl2::video::Window>, points: &VecDeque<DataPoint>) -> Result<(), String> {
+/// Plot the values in the analyzed range as dots with varying alpha
+/// channel according to their amplitude.
+/// Also draw a line through the dominant frequencies and a smoothed
+/// version of the line (average of the point and the prev/next point,
+/// doesn't stop at a "nothing" value)
+fn draw_data_points(canvas: &mut Canvas<sdl2::video::Window>,
+                    points: &VecDeque<DataPoint>) -> Result<(), String> {
     let (width,height) = canvas.output_size()?;
     let mut prev = None;
     let mut prev_smooth = None;
@@ -306,6 +313,7 @@ fn draw_data_points(canvas: &mut Canvas<sdl2::video::Window>, points: &VecDeque<
     Ok(())
 }
 
+/// Smooth the value by averaging it with the prev/next value.
 fn smooth_value(i: usize, f: f32, points: &VecDeque<DataPoint>) -> f32 {
     let mut numerator = f;
     let mut denominator = 1.0;
@@ -324,6 +332,7 @@ fn smooth_value(i: usize, f: f32, points: &VecDeque<DataPoint>) -> f32 {
     numerator / denominator
 }
 
+/// Convert an index in the fft output to the corresponding frequency
 fn index_to_freq(i: usize, sample_rate: f64) -> f32 {
     i as f32 * sample_rate as f32 / FRAME_COUNT as f32
 }
