@@ -9,7 +9,7 @@ use std::str::FromStr;
 use std::sync::mpsc::{Sender,Receiver};
 use std::sync::mpsc;
 use std::collections::VecDeque;
-use rustfft::FFTplanner;
+use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
 use rustfft::num_traits::Zero;
 use sdl2::pixels::Color;
@@ -25,9 +25,9 @@ const INTERLEAVED: bool = true;       // Shouldn't make a difference; we only ha
 const DEFAULT_SAMPLE_RATE: f64 = 11_025.0;
 const FRAME_COUNT: u32 = 1024;
 const THRESHOLD: f32 = 3.0;
-const LOWEST_FREQUENCY: f32 = 64.0;
-const HIGHEST_FREQUENCY: f32 = 420.0;
-const LONG_SILENCE_DURATION: i32 = 15; // Number of samples below threshold that consitute "long silence"
+const LOWEST_FREQUENCY: f32 = 50.0;
+const HIGHEST_FREQUENCY: f32 = 550.0;
+const LONG_SILENCE_DURATION: i32 = 15; // Number of samples below threshold that constitute "long silence"
 const NUMBER_OF_VALUES: usize = 84;
 const N: usize = 4; // The number of frequencies to consider for the graph (i.e. use the N loudest frequencies for the graph)
 type FORMAT = f32;
@@ -361,9 +361,10 @@ fn main() -> Result<(), pa::Error> {
     thread::spawn(move || gui_thread(rx));
 
     let mut fft_input_old = vec![Complex::<FORMAT>::zero(); FRAME_COUNT as usize];
-    let mut fft_input_new = vec![Complex::<FORMAT>::zero(); FRAME_COUNT as usize];
-    let mut fft_output = vec![Complex::<FORMAT>::zero(); FRAME_COUNT as usize];
-    let fft = FFTplanner::new(false).plan_fft(FRAME_COUNT as usize);
+    let mut fft_input_new = fft_input_old.clone();
+    let mut fft_output = fft_input_old.clone();
+    let mut fft_scratch = fft_input_old.clone();
+    let fft = FftPlanner::new().plan_fft_forward(FRAME_COUNT as usize);
     let mut first_run = true;
     loop {
         let input_samples = stream.read(if first_run { FRAME_COUNT } else { FRAME_COUNT/2 });
@@ -383,7 +384,11 @@ fn main() -> Result<(), pa::Error> {
             fft_input_new.clear();
         }
         fft_input_new.extend(input_samples.iter().map(|x| Complex::new(*x, 0.0)));
-        fft.process(&mut fft_input_new, &mut fft_output);
+        fft_output.clear();
+        fft_output.extend(fft_input_new.iter());
+        fft_scratch.resize(fft.get_inplace_scratch_len(), Complex::<FORMAT>::zero());
+        // This writes the output into the first argument.
+        fft.process_with_scratch(&mut fft_output, &mut fft_scratch);
         let (freq,norm,freqs_norms) =
             process_fft_results(N, &fft_output, first_significant_index,
                                 last_significant_index, sample_rate);
